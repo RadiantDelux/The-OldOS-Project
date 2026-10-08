@@ -26,8 +26,8 @@ jobs:
     env:
       PROJECT: OldOS/OldOS.xcodeproj
       SCHEME: OldOS
-      DERIVED_DATA: ${{ runner.temp }}/OldOSDerivedData
-      PACKAGE_CACHE: ${{ runner.temp }}/OldOSPackages
+      DERIVED_DATA: ${{ github.workspace }}/.build/OldOSDerivedData
+      PACKAGE_CACHE: ${{ github.workspace }}/.build/OldOSPackages
 
     steps:
       - name: Check out repository
