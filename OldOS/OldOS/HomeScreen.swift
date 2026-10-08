@@ -4583,3 +4583,215 @@ private class TouchForwardingView: UIView {
         }
     }
 }
+
+
+// MARK: User-created app shortcuts. Public APIs only; no jailbreak required.
+import PhotosUI
+import UniformTypeIdentifiers
+
+struct OldOSExternalShortcut: Identifiable, Codable {
+    var id: UUID = UUID()
+    var name: String = ""
+    var url: String = ""
+    var symbol: String = "app.fill"
+    var color: String = "blue"
+    var icon: Data? = nil
+    var isValid: Bool {
+        let s = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let link = URL(string: s), let scheme = link.scheme?.lowercased() else { return false }
+        if ["file", "data", "javascript"].contains(scheme) { return false }
+        if ["http", "https"].contains(scheme) { return link.host != nil }
+        return !scheme.isEmpty && s.contains("://")
+    }
+}
+final class OldOSExternalAppStore: ObservableObject {
+    @Published private(set) var items: [OldOSExternalShortcut] = []
+    private let location: URL
+    init() {
+        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("OldOSCustomApps", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: nil)
+        location = directory.appendingPathComponent("apps.json")
+        if let data = try? Data(contentsOf: location),
+           let value = try? JSONDecoder().decode([OldOSExternalShortcut].self, from: data) {
+            items = Array(value.filter { $0.isValid && !$0.name.isEmpty }.prefix(512))
+        }
+    }
+    func upsert(_ item: OldOSExternalShortcut) {
+        guard item.isValid && !item.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        if let n = items.firstIndex(where: { $0.id == item.id }) { items[n] = item }
+        else if items.count < 512 { items.append(item) }
+        save()
+    }
+    func delete(_ id: UUID) { items.removeAll { $0.id == id }; save() }
+    func move(_ id: UUID, offset: Int) {
+        guard let n = items.firstIndex(where: { $0.id == id }), items.indices.contains(n + offset) else { return }
+        let item = items.remove(at: n); items.insert(item, at: n + offset); save()
+    }
+    func merge(_ imported: [OldOSExternalShortcut]) {
+        for item in imported.prefix(512) where item.isValid && !item.name.isEmpty { upsert(item) }
+    }
+    private func save() {
+        if let data = try? JSONEncoder().encode(items) { try? data.write(to: location, options: .atomic) }
+    }
+    static func launch(_ item: OldOSExternalShortcut, failed: @escaping () -> Void) {
+        guard item.isValid, let url = URL(string: item.url) else { failed(); return }
+        UIApplication.shared.open(url, options: [:]) { success in
+            if !success { DispatchQueue.main.async { failed() } }
+        }
+    }
+}
+struct OldOSShortcutBackup: FileDocument {
+    static var readableContentTypes: [UTType] { [.json] }
+    var items: [OldOSExternalShortcut]
+    init(items: [OldOSExternalShortcut]) { self.items = items }
+    init(configuration: ReadConfiguration) throws {
+        guard let data = configuration.file.regularFileContents else { throw CocoaError(.fileReadCorruptFile) }
+        items = try JSONDecoder().decode([OldOSExternalShortcut].self, from: data)
+    }
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        FileWrapper(regularFileWithContents: try JSONEncoder().encode(items))
+    }
+}
+struct OldOSShortcutIcon: View {
+    let shortcut: OldOSExternalShortcut
+    var size: CGFloat = UIScreen.main.bounds.width / (390 / 60)
+    private var tint: Color {
+        switch shortcut.color {
+        case "red": return Color(red: 0.85, green: 0.2, blue: 0.2)
+        case "green": return Color(red: 0.14, green: 0.67, blue: 0.3)
+        case "purple": return Color(red: 0.57, green: 0.34, blue: 0.8)
+        case "orange": return Color(red: 0.9, green: 0.55, blue: 0.17)
+        case "gray": return Color(red: 0.47, green: 0.52, blue: 0.59)
+        default: return Color(red: 0.18, green: 0.51, blue: 0.9)
+        }
+    }
+    var body: some View {
+        VStack(spacing: 0) {
+            ZStack {
+                RoundedRectangle(cornerRadius: size * 0.20).fill(
+                    LinearGradient(colors: [tint.opacity(0.7), tint], startPoint: .top, endPoint: .bottom))
+                if let data = shortcut.icon, let image = UIImage(data: data) {
+                    Image(uiImage: image).resizable().scaledToFill()
+                        .frame(width: size, height: size).clipped()
+                } else {
+                    Image(systemName: shortcut.symbol).resizable().scaledToFit()
+                        .foregroundColor(.white)
+                        .frame(width: size * 0.52, height: size * 0.52)
+                }
+                LinearGradient(colors: [.white.opacity(0.45), .clear], startPoint: .top, endPoint: .bottom)
+                    .frame(height: size * 0.45).clipShape(Ellipse().scaleEffect(x: 1.35, y: 1.5, anchor: .top))
+            }
+            .frame(width: size, height: size)
+            .clipShape(RoundedRectangle(cornerRadius: size * 0.20))
+            .overlay(RoundedRectangle(cornerRadius: size * 0.20).stroke(.white.opacity(0.35), lineWidth: 0.8))
+            Text(shortcut.name).foregroundColor(.white)
+                .font(.custom("Helvetica Neue Medium", fixedSize: 13))
+                .lineLimit(1).minimumScaleFactor(0.7)
+                .shadow(color: .black.opacity(0.9), radius: 0.75, x: 0, y: 1.75)
+                .offset(y: -4)
+        }.frame(width: UIScreen.main.bounds.width / (390 / 85))
+    }
+}
+struct OldOSShortcutEditor: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var item: OldOSExternalShortcut
+    @State private var photo: PhotosPickerItem?
+    let onSave: (OldOSExternalShortcut) -> Void
+    init(shortcut: OldOSExternalShortcut, onSave: @escaping (OldOSExternalShortcut) -> Void) {
+        _item = State(initialValue: shortcut)
+        self.onSave = onSave
+    }
+    private var canSave: Bool { item.isValid && !item.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    private let samples: [(String,String,String,String)] = [
+        ("WhatsApp","whatsapp://","message.fill","green"),
+        ("YouTube","youtube://","play.rectangle.fill","red"),
+        ("Spotify","spotify://","music.note","green"),
+        ("Telegram","tg://","paperplane.fill","blue"),
+        ("Discord","discord://","bubble.left.and.bubble.right.fill","purple"),
+        ("Instagram","instagram://app","camera.fill","purple"),
+        ("Google Maps","comgooglemaps://","map.fill","green"),
+        ("Shortcuts","shortcuts://","square.stack.3d.up.fill","purple")
+    ]
+    var body: some View {
+        NavigationView {
+            Form {
+                Section("Icon") {
+                    HStack(spacing: 20) {
+                        OldOSShortcutIcon(shortcut: item, size: 60)
+                        PhotosPicker(selection: $photo, matching: .images) {
+                            Label("Choose Photo", systemImage: "photo")
+                        }
+                        if item.icon != nil {
+                            Button("Clear") { item.icon = nil }
+                        }
+                    }
+                    Picker("Icon Color", selection: $item.color) {
+                        ForEach(["blue","green","red","orange","purple","gray"], id: \.self) {
+                            Text($0.capitalized).tag($0)
+                        }
+                    }
+                    Picker("Symbol", selection: $item.symbol) {
+                        ForEach(["app.fill","plus","message.fill","play.rectangle.fill","music.note",
+                                 "gamecontroller.fill","camera.fill","envelope.fill","globe",
+                                 "star.fill","map.fill","paperplane.fill","folder.fill"], id: \.self) {
+                            Label($0, systemImage: $0).tag($0)
+                        }
+                    }
+                }
+                Section("Application") {
+                    TextField("Name", text: $item.name)
+                    TextField("App URL, universal link, or Shortcut", text: $item.url)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .keyboardType(.URL)
+                    Menu("Use Known URL Scheme") {
+                        ForEach(samples.indices, id: \.self) { n in
+                            Button(samples[n].0) {
+                                item.name = samples[n].0
+                                item.url = samples[n].1
+                                item.symbol = samples[n].2
+                                item.color = samples[n].3
+                            }
+                        }
+                    }
+                    if !item.url.isEmpty && !item.isValid {
+                        Text("Enter a valid URL.").foregroundColor(.red)
+                    }
+                }
+                Section("Shortcuts Support") {
+                    Text("For an Apple Shortcut, use shortcuts://run-shortcut?name=My%20Shortcut")
+                    Text("Only apps supporting URLs or Shortcuts can be opened. iOS does not allow automatic app discovery.")
+                }
+            }
+            .navigationTitle("Add to OldOS")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("Save") {
+                        item.name = item.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                        item.url = item.url.trimmingCharacters(in: .whitespacesAndNewlines)
+                        onSave(item); dismiss()
+                    }.disabled(!canSave)
+                }
+            }
+        }
+        .onChange(of: photo) { chosen in
+            Task {
+                guard let chosen = chosen,
+                      let data = try? await chosen.loadTransferable(type: Data.self),
+                      let image = UIImage(data: data), image.size.width > 0, image.size.height > 0 else { return }
+                let size: CGFloat = 144
+                let factor = max(size / image.size.width, size / image.size.height)
+                let drawSize = CGSize(width: image.size.width * factor, height: image.size.height * factor)
+                let rendered = UIGraphicsImageRenderer(size: CGSize(width: size, height: size)).image { _ in
+                    image.draw(in: CGRect(x: (size - drawSize.width)/2, y: (size - drawSize.height)/2,
+                                          width: drawSize.width, height: drawSize.height))
+                }
+                let bytes = rendered.jpegData(compressionQuality: 0.82)
+                await MainActor.run { item.icon = bytes }
+            }
+        }
+    }
+}
