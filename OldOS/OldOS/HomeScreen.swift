@@ -2788,6 +2788,7 @@ struct HomeScreen: View {
     @Binding var folder_offset: CGFloat
     @Binding var show_folder: Bool
     @StateObject private var externalApps = OldOSExternalAppStore()
+    @State private var editingShortcut: OldOSExternalShortcut?
     @GestureState  var dragOffset: CGFloat = 0
     var userDefaults = UserDefaults.standard
     private var externalPageCount: Int {
@@ -2888,7 +2889,8 @@ struct HomeScreen: View {
                             apps_second(apps_scale: $apps_scale, apps_scale_height: $apps_scale_height,
                                         show_searchField: $show_searchField, icon_scaler: $icon_scaler,
                                         current_view: $current_view, dock_offset: $dock_offset,
-                                        folder_offset: $folder_offset, externalApps: externalApps, pageIndex: page,
+                                        folder_offset: $folder_offset, externalApps: externalApps,
+                                        editingShortcut: $editingShortcut, pageIndex: page,
                                         isActivePage: selectedPage == page + 2,
                                         width: geometry.size.width, height: geometry.size.height)
                                 .frame(maxWidth: geometry.size.width, maxHeight: geometry.size.height)
@@ -2936,6 +2938,24 @@ struct HomeScreen: View {
                         }
                     }.padding(.bottom, 110).offset(y:dock_offset).offset(y:bottom_indicator_offset).offset(y:folder_offset).allowsHitTesting(folder_offset == 0)
                 }.opacity(show_multitasking == true ? 0 : 1).allowsHitTesting(folder_offset == 0)
+                // Keep the editor in the same hosting hierarchy as the OldOS keyboard.
+                // A native SwiftUI .sheet would cover the keyboard overlay.
+                if let selectedShortcut = editingShortcut {
+                    OldOSShortcutEditor(
+                        shortcut: selectedShortcut,
+                        onSave: { updated in
+                            externalApps.upsert(updated)
+                            editingShortcut = nil
+                        },
+                        onCancel: {
+                            editingShortcut = nil
+                        }
+                    )
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    .background(Color.black)
+                    .zIndex(1000)
+                    .transition(.opacity)
+                }
             }
             .clipped() // Clip only at the full simulated-phone boundary.
             .onChange(of: externalApps.items.count) { _ in
@@ -3824,11 +3844,11 @@ struct apps_second: View {
     @Binding var dock_offset: CGFloat
     @Binding var folder_offset: CGFloat
     @ObservedObject var externalApps: OldOSExternalAppStore
+    @Binding var editingShortcut: OldOSExternalShortcut?
     var pageIndex: Int
     var isActivePage: Bool
     var width: CGFloat
     var height: CGFloat
-    @State private var editingShortcut: OldOSExternalShortcut?
     @State private var launchError = false
     @State private var errorMessage = ""
     @State private var exporting = false
@@ -3884,9 +3904,6 @@ struct apps_second: View {
         }
         .opacity(isActivePage || apps_scale <= 1.001 ? 1 : 0)
         .allowOverflowFromPagingContainer()
-        .sheet(item: $editingShortcut) { item in
-            OldOSShortcutEditor(shortcut: item) { externalApps.upsert($0) }
-        }
         .fileExporter(isPresented: $exporting, document: OldOSShortcutBackup(items: externalApps.items),
                       contentType: .json, defaultFilename: "OldOS-Shortcuts") { result in
             if case .failure(let error) = result { errorMessage = error.localizedDescription; launchError = true }
