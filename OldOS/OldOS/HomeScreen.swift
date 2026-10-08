@@ -895,7 +895,6 @@
 //    @Binding var apps_scale: CGFloat
 //    @Binding var current_view: String
 //    @Binding var dock_offset: CGFloat
-    @ObservedObject var externalApps: OldOSExternalAppStore
 //    private let gradient = LinearGradient([.white, .white], to: .trailing)
 //    var body: some View {
 //        ZStack {
@@ -918,16 +917,13 @@
 //                    Spacer(minLength: 20)
 //                } .ps_innerShadow(.capsule(gradient), radius:2).padding([.leading, .trailing])
 //                Spacer().frame(height: 10)
-//                search_results_view(apps: apps, search: $search, apps_scale: $apps_scale, current_view: $current_view, dock_offset: $dock_offset, externalApps: externalApps).padding([.leading, .trailing]).cornerRadius(12)
+//                search_results_view(apps: apps, search: $search, apps_scale: $apps_scale, current_view: $current_view, dock_offset: $dock_offset).padding([.leading, .trailing]).cornerRadius(12)
 //            }
 //        }.frame(width:width, height: height)
 //    }
 //}
 //
 //struct search_results_view: View {
-    @ObservedObject var externalApps: OldOSExternalAppStore
-    @State private var error = false
-
 //    var apps: [app_search_id_ext]
 //    @Binding var search: String
 //    @Binding var apps_scale: CGFloat
@@ -938,18 +934,7 @@
 //            VStack(spacing:0) {
 //                ScrollView(showsIndicators: true) {
 //                    VStack(spacing: 0)  {
-//                        ForEach(externalApps.items.filter { $0.name.localizedCaseInsensitiveContains(search) }) { shortcut in
-                            Button {
-                                OldOSExternalAppStore.launch(shortcut) { error = true }
-                            } label: {
-                                HStack {
-                                    OldOSShortcutIcon(shortcut: shortcut, size: 33).frame(width: 44, height: 44)
-                                    Text(shortcut.name).foregroundColor(.black)
-                                    Spacer()
-                                }.frame(height: 50).background(Color(red: 0.88, green: 0.89, blue: 0.90))
-                            }
-                        }
-                        ForEach(apps.filter{$0.name.localizedCaseInsensitiveContains(search)}.sorted(by: {$0.name > $1.name}), id:\.id) { application in
+//                        ForEach(apps.filter{$0.name.localizedCaseInsensitiveContains(search)}.sorted(by: {$0.name > $1.name}), id:\.id) { application in
 //                            search_result_item(apps: apps, search: $search, apps_scale: $apps_scale, current_view: $current_view, dock_offset: $dock_offset, application: application)
 //                            
 //                        }
@@ -1549,97 +1534,47 @@
 //
 //
 //struct apps_second: View {
-    @Binding var apps_scale: CGFloat
-    @Binding var apps_scale_height: CGFloat
-    @Binding var show_searchField: Bool
-    @Binding var icon_scaler: CGFloat
-    @Binding var current_view: String
-    @Binding var dock_offset: CGFloat
-    @Binding var folder_offset: CGFloat
-    @ObservedObject var externalApps: OldOSExternalAppStore
-    var pageIndex: Int
-    var isActivePage: Bool
-    var width: CGFloat
-    var height: CGFloat
-    @State private var editingShortcut: OldOSExternalShortcut?
-    @State private var launchError = false
-    @State private var errorMessage = ""
-    @State private var exporting = false
-    @State private var importing = false
-
-    private var shortcuts: [OldOSExternalShortcut] {
-        let start = pageIndex == 0 ? 0 : 14 + (pageIndex - 1) * 15
-        return Array(externalApps.items.dropFirst(start).prefix(pageIndex == 0 ? 14 : 15))
-    }
-    private var flight: CGFloat { min(max((apps_scale - 1) / 3, 0), 1) }
-    private func flightOffset(_ position: Int) -> CGSize {
-        CGSize(width: (position % 4 < 2 ? -1 : 1) * UIScreen.main.bounds.width * 0.6 * flight,
-               height: (position / 4 < 2 ? -1 : 1) * UIScreen.main.bounds.height * 0.45 * flight)
-    }
-    var body: some View {
-        VStack {
-            LazyVGrid(columns: Array(repeating: GridItem(.fixed(UIScreen.main.bounds.width / (390 / 85)), spacing: 1), count: 4),
-                      spacing: UIScreen.main.bounds.height / (844 / 40) * icon_scaler) {
-                if pageIndex == 0 {
-                    app(image_name: "Contacts", app_name: "Contacts", current_view: $current_view, apps_scale: $apps_scale,
-                        dock_offset: $dock_offset, folder_offset: $folder_offset)
-                        .offset(flightOffset(0))
-                }
-                ForEach(Array(shortcuts.enumerated()), id: \.element.id) { pair in
-                    let shortcut = pair.element
-                    Button {
-                        OldOSExternalAppStore.launch(shortcut) {
-                            errorMessage = "Could not open \(shortcut.name). Check its link and whether the app is installed."
-                            launchError = true
-                        }
-                    } label: {
-                        OldOSShortcutIcon(shortcut: shortcut)
-                    }
-                    .buttonStyle(.plain)
-                    .offset(flightOffset(pair.offset + (pageIndex == 0 ? 1 : 0)))
-                    .contextMenu {
-                        Button("Edit") { editingShortcut = shortcut }
-                        Button("Move Earlier") { externalApps.move(shortcut.id, offset: -1) }
-                        Button("Move Later") { externalApps.move(shortcut.id, offset: 1) }
-                        Button("Delete", role: .destructive) { externalApps.delete(shortcut.id) }
-                    }
-                }
-                Button { editingShortcut = OldOSExternalShortcut() } label: {
-                    OldOSShortcutIcon(shortcut: OldOSExternalShortcut(name: "Add Apps", url: "https://example.com", symbol: "plus", color: "gray"))
-                }
-                .buttonStyle(.plain)
-                .contextMenu {
-                    Button("Export Shortcuts") { exporting = true }
-                    Button("Import Shortcuts") { importing = true }
-                }
-            }
-            Spacer()
-        }
-        .opacity(isActivePage || apps_scale <= 1.001 ? 1 : 0)
-        .allowOverflowFromPagingContainer()
-        .sheet(item: $editingShortcut) { item in
-            OldOSShortcutEditor(shortcut: item) { externalApps.upsert($0) }
-        }
-        .fileExporter(isPresented: $exporting, document: OldOSShortcutBackup(items: externalApps.items),
-                      contentType: .json, defaultFilename: "OldOS-Shortcuts") { result in
-            if case .failure(let error) = result { errorMessage = error.localizedDescription; launchError = true }
-        }
-        .fileImporter(isPresented: $importing, allowedContentTypes: [.json]) { result in
-            do {
-                let url = try result.get()
-                let scoped = url.startAccessingSecurityScopedResource()
-                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-                let data = try Data(contentsOf: url)
-                guard data.count < 8_000_000 else { errorMessage = "Backup too large"; launchError = true; return }
-                externalApps.merge(try JSONDecoder().decode([OldOSExternalShortcut].self, from: data))
-            } catch { errorMessage = error.localizedDescription; launchError = true }
-        }
-        .alert("External App", isPresented: $launchError) { Button("OK", role: .cancel) {} }
-            message: { Text(errorMessage) }
-    }
-}
-
-struct multitasking_app: View {
+//    @Binding var apps_scale: CGFloat
+//    @Binding var apps_scale_height: CGFloat
+//    @Binding var show_searchField:Bool
+//    @Binding var icon_scaler: CGFloat
+//    @Binding var current_view: String
+//    @Binding var dock_offset: CGFloat
+//    @Binding var folder_offset: CGFloat
+//    @Binding var flyAnimatedIn: Bool
+//    var isActivePage: Bool
+//    var width: CGFloat
+//    var height: CGFloat
+//
+//    private let flyX: CGFloat = UIScreen.main.bounds.width * 0.6
+//    private let flyY: CGFloat = UIScreen.main.bounds.height * 0.45
+//    private var tlOff: CGPoint {
+//        flyAnimatedIn ? .zero : CGPoint(x: -flyX, y: -flyY)
+//    }
+//    
+//    var body: some View {
+//        VStack {
+//            LazyVGrid(columns: [
+//                GridItem(.fixed(UIScreen.main.bounds.width/(390/85)), spacing: 1),
+//                GridItem(.fixed(UIScreen.main.bounds.width/(390/85)), spacing: 1),
+//                GridItem(.fixed(UIScreen.main.bounds.width/(390/85)), spacing: 1),
+//                GridItem(.fixed(UIScreen.main.bounds.width/(390/85)), spacing: 1)
+//            ], alignment: .center, spacing: UIScreen.main.bounds.height/(844/40)*icon_scaler) {
+//                app(image_name: "Contacts", app_name: "Contacts", current_view: $current_view, apps_scale: $apps_scale, dock_offset: $dock_offset, folder_offset: $folder_offset, quadrantOffset: tlOff)
+//                
+//            }
+//            Spacer().frame(height:UIScreen.main.bounds.height/(844/40)*icon_scaler)
+//            Spacer()
+//        }
+//        .opacity(isActivePage || apps_scale <= 1.001 ? 1 : 0)
+//        .allowOverflowFromPagingContainer()
+//        .onAppear() {
+//            UIApplication.shared.endEditing()
+//        }
+//    }
+//}
+//
+//struct multitasking_app: View {
 //    var image_name: String
 //    var app_name: String
 //    @State var pressed = false
@@ -2332,6 +2267,8 @@ struct multitasking_app: View {
 //
 
 import SwiftUI
+import PhotosUI
+import UniformTypeIdentifiers
 import CoreTelephony
 import PureSwiftUITools
 import Network
@@ -2854,7 +2791,7 @@ struct HomeScreen: View {
     @GestureState  var dragOffset: CGFloat = 0
     var userDefaults = UserDefaults.standard
     private var externalPageCount: Int {
-        1 + (max(0, externalApps.shortcuts.count - 14) + 14) / 15
+        1 + (max(0, externalApps.items.count - 14) + 14) / 15
     }
     var body: some View {
         GeometryReader { geometry in
@@ -3001,7 +2938,7 @@ struct HomeScreen: View {
                 }.opacity(show_multitasking == true ? 0 : 1).allowsHitTesting(folder_offset == 0)
             }
             .clipped() // Clip only at the full simulated-phone boundary.
-            .onChange(of: externalApps.shortcuts.count) { _ in
+            .onChange(of: externalApps.items.count) { _ in
                 selectedPage = min(selectedPage, externalPageCount + 1)
             }
             .onAppear() {
@@ -3217,6 +3154,7 @@ struct search: View {
     @Binding var apps_scale: CGFloat
     @Binding var current_view: String
     @Binding var dock_offset: CGFloat
+    @ObservedObject var externalApps: OldOSExternalAppStore
     private let gradient = LinearGradient([.white, .white], to: .trailing)
     var body: some View {
         ZStack {
@@ -3239,13 +3177,15 @@ struct search: View {
                     Spacer(minLength: 20)
                 } .ps_innerShadow(.capsule(gradient), radius:2).padding([.leading, .trailing])
                 Spacer().frame(height: 10)
-                search_results_view(apps: apps, search: $search, apps_scale: $apps_scale, current_view: $current_view, dock_offset: $dock_offset).padding([.leading, .trailing]).cornerRadius(12)
+                search_results_view(apps: apps, search: $search, apps_scale: $apps_scale, current_view: $current_view, dock_offset: $dock_offset, externalApps: externalApps).padding([.leading, .trailing]).cornerRadius(12)
             }
         }.frame(width:width, height: height)
     }
 }
 
 struct search_results_view: View {
+    @ObservedObject var externalApps: OldOSExternalAppStore
+    @State private var showExternalError = false
     var apps: [app_search_id_ext]
     @Binding var search: String
     @Binding var apps_scale: CGFloat
@@ -3256,6 +3196,21 @@ struct search_results_view: View {
             VStack(spacing:0) {
                 ScrollView(showsIndicators: true) {
                     VStack(spacing: 0)  {
+                        ForEach(externalApps.items.filter { $0.name.localizedCaseInsensitiveContains(search) }) { shortcut in
+                            Button {
+                                OldOSExternalAppStore.launch(shortcut) { showExternalError = true }
+                            } label: {
+                                HStack {
+                                    OldOSShortcutIcon(shortcut: shortcut, size: 33)
+                                        .frame(width: 44, height: 44)
+                                    Text(shortcut.name).foregroundColor(.black)
+                                        .font(.custom("Helvetica Neue Bold", fixedSize: 16))
+                                    Spacer()
+                                }
+                                .frame(height: 50)
+                                .background(Color(red: 228/255, green: 229/255, blue: 230/255))
+                            }.buttonStyle(.plain)
+                        }
                         ForEach(apps.filter{$0.name.localizedCaseInsensitiveContains(search)}.sorted(by: {$0.name > $1.name}), id:\.id) { application in
                             search_result_item(apps: apps, search: $search, apps_scale: $apps_scale, current_view: $current_view, dock_offset: $dock_offset, application: application)
                             
@@ -3263,6 +3218,10 @@ struct search_results_view: View {
                     }
                 }.frame(height: geometry.size.height - 40).background(Color(red: 228/255, green: 229/255, blue: 230/255)).cornerRadius(12)
             }
+        }.alert("Could not Open App", isPresented: $showExternalError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("The app could not be opened. Check its URL scheme or use an Apple Shortcut.")
         }.onAppear() {
             //UIScrollView.appearance().bounces = true -> There's something weird going on where we can't readily modify the bounce value of our scrollviews in the TabView. Therefore, our app pages bounce, when they shouldn't. For now, we'll compromise and have the search not bounce, instead of the apps bouncing.
         }.onDisappear() {
@@ -3859,43 +3818,91 @@ extension View {
 struct apps_second: View {
     @Binding var apps_scale: CGFloat
     @Binding var apps_scale_height: CGFloat
-    @Binding var show_searchField:Bool
+    @Binding var show_searchField: Bool
     @Binding var icon_scaler: CGFloat
     @Binding var current_view: String
     @Binding var dock_offset: CGFloat
     @Binding var folder_offset: CGFloat
+    @ObservedObject var externalApps: OldOSExternalAppStore
+    var pageIndex: Int
     var isActivePage: Bool
     var width: CGFloat
     var height: CGFloat
+    @State private var editingShortcut: OldOSExternalShortcut?
+    @State private var launchError = false
+    @State private var errorMessage = ""
+    @State private var exporting = false
+    @State private var importing = false
 
-    private let flyX: CGFloat = UIScreen.main.bounds.width * 0.6
-    private let flyY: CGFloat = UIScreen.main.bounds.height * 0.45
-    private var flyProgress: CGFloat {
-        min(max((apps_scale - 1.0) / 3.0, 0.0), 1.0)
+    private var shortcuts: [OldOSExternalShortcut] {
+        let start = pageIndex == 0 ? 0 : 14 + (pageIndex - 1) * 15
+        return Array(externalApps.items.dropFirst(start).prefix(pageIndex == 0 ? 14 : 15))
     }
-    private var tlOff: CGPoint {
-        CGPoint(x: -flyX * flyProgress, y: -flyY * flyProgress)
+    private var flight: CGFloat { min(max((apps_scale - 1) / 3, 0), 1) }
+    private func flightOffset(_ position: Int) -> CGSize {
+        CGSize(width: (position % 4 < 2 ? -1 : 1) * UIScreen.main.bounds.width * 0.6 * flight,
+               height: (position / 4 < 2 ? -1 : 1) * UIScreen.main.bounds.height * 0.45 * flight)
     }
-    
     var body: some View {
         VStack {
-            LazyVGrid(columns: [
-                GridItem(.fixed(UIScreen.main.bounds.width/(390/85)), spacing: 1),
-                GridItem(.fixed(UIScreen.main.bounds.width/(390/85)), spacing: 1),
-                GridItem(.fixed(UIScreen.main.bounds.width/(390/85)), spacing: 1),
-                GridItem(.fixed(UIScreen.main.bounds.width/(390/85)), spacing: 1)
-            ], alignment: .center, spacing: UIScreen.main.bounds.height/(844/40)*icon_scaler) {
-                app(image_name: "Contacts", app_name: "Contacts", current_view: $current_view, apps_scale: $apps_scale, dock_offset: $dock_offset, folder_offset: $folder_offset, quadrantOffset: tlOff)
-                
+            LazyVGrid(columns: Array(repeating: GridItem(.fixed(UIScreen.main.bounds.width / (390 / 85)), spacing: 1), count: 4),
+                      spacing: UIScreen.main.bounds.height / (844 / 40) * icon_scaler) {
+                if pageIndex == 0 {
+                    app(image_name: "Contacts", app_name: "Contacts", current_view: $current_view, apps_scale: $apps_scale,
+                        dock_offset: $dock_offset, folder_offset: $folder_offset)
+                        .offset(flightOffset(0))
+                }
+                ForEach(Array(shortcuts.enumerated()), id: \.element.id) { pair in
+                    let shortcut = pair.element
+                    Button {
+                        OldOSExternalAppStore.launch(shortcut) {
+                            errorMessage = "Could not open \(shortcut.name). Check its link and whether the app is installed."
+                            launchError = true
+                        }
+                    } label: {
+                        OldOSShortcutIcon(shortcut: shortcut)
+                    }
+                    .buttonStyle(.plain)
+                    .offset(flightOffset(pair.offset + (pageIndex == 0 ? 1 : 0)))
+                    .contextMenu {
+                        Button("Edit") { editingShortcut = shortcut }
+                        Button("Move Earlier") { externalApps.move(shortcut.id, offset: -1) }
+                        Button("Move Later") { externalApps.move(shortcut.id, offset: 1) }
+                        Button("Delete", role: .destructive) { externalApps.delete(shortcut.id) }
+                    }
+                }
+                Button { editingShortcut = OldOSExternalShortcut() } label: {
+                    OldOSShortcutIcon(shortcut: OldOSExternalShortcut(name: "Add Apps", url: "https://example.com", symbol: "plus", color: "gray"))
+                }
+                .buttonStyle(.plain)
+                .contextMenu {
+                    Button("Export Shortcuts") { exporting = true }
+                    Button("Import Shortcuts") { importing = true }
+                }
             }
-            Spacer().frame(height:UIScreen.main.bounds.height/(844/40)*icon_scaler)
             Spacer()
         }
         .opacity(isActivePage || apps_scale <= 1.001 ? 1 : 0)
         .allowOverflowFromPagingContainer()
-        .onAppear() {
-            UIApplication.shared.endEditing()
+        .sheet(item: $editingShortcut) { item in
+            OldOSShortcutEditor(shortcut: item) { externalApps.upsert($0) }
         }
+        .fileExporter(isPresented: $exporting, document: OldOSShortcutBackup(items: externalApps.items),
+                      contentType: .json, defaultFilename: "OldOS-Shortcuts") { result in
+            if case .failure(let error) = result { errorMessage = error.localizedDescription; launchError = true }
+        }
+        .fileImporter(isPresented: $importing, allowedContentTypes: [.json]) { result in
+            do {
+                let url = try result.get()
+                let scoped = url.startAccessingSecurityScopedResource()
+                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                let data = try Data(contentsOf: url)
+                guard data.count < 8_000_000 else { errorMessage = "Backup too large"; launchError = true; return }
+                externalApps.merge(try JSONDecoder().decode([OldOSExternalShortcut].self, from: data))
+            } catch { errorMessage = error.localizedDescription; launchError = true }
+        }
+        .alert("External App", isPresented: $launchError) { Button("OK", role: .cancel) {} }
+            message: { Text(errorMessage) }
     }
 }
 
@@ -4584,10 +4591,7 @@ private class TouchForwardingView: UIView {
     }
 }
 
-
 // MARK: User-created app shortcuts. Public APIs only; no jailbreak required.
-import PhotosUI
-import UniformTypeIdentifiers
 
 struct OldOSExternalShortcut: Identifiable, Codable {
     var id: UUID = UUID()
