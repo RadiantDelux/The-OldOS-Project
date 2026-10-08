@@ -2785,8 +2785,12 @@ struct HomeScreen: View {
     @Binding var instant_multitasking_change: Bool
     @Binding var folder_offset: CGFloat
     @Binding var show_folder: Bool
+    @StateObject private var externalApps = OldOSExternalAppStore()
     @GestureState  var dragOffset: CGFloat = 0
     var userDefaults = UserDefaults.standard
+    private var externalPageCount: Int {
+        1 + (max(0, externalApps.shortcuts.count - 14) + 14) / 15
+    }
     var body: some View {
         GeometryReader { geometry in
             ZStack {
@@ -2869,7 +2873,7 @@ struct HomeScreen: View {
                     Spacer().frame(height: 30)
 //                    Spacer().frame(height: folder_offset)
                     TabView(selection: $selectedPage) {
-                        search(width: $search_width, height: $search_height, show_searchField: $show_searchField, apps_scale: $apps_scale, current_view: $current_view, dock_offset: $dock_offset).frame(maxWidth: geometry.size.width, maxHeight:geometry.size.height).zIndex(0).clipped().tag(0)
+                        search(width: $search_width, height: $search_height, show_searchField: $show_searchField, apps_scale: $apps_scale, current_view: $current_view, dock_offset: $dock_offset, externalApps: externalApps).frame(maxWidth: geometry.size.width, maxHeight:geometry.size.height).zIndex(0).clipped().tag(0)
                         apps(apps_scale:$apps_scale, apps_scale_height: $apps_scale_height, show_searchField: $show_searchField, icon_scaler: $icon_scaler, current_view: $current_view, dock_offset: $dock_offset, folder_offset: $folder_offset, show_folder: $show_folder, isActivePage: selectedPage == 1, width: geometry.size.width, height: geometry.size.height).frame(maxWidth: geometry.size.width, maxHeight:geometry.size.height).zIndex(0).tag(1)    .overlay(
                             GeometryReader { proxy in
                                 Color.clear.hidden().onAppear() {
@@ -2878,7 +2882,17 @@ struct HomeScreen: View {
                                 }
                             }
                         )
-                        apps_second(apps_scale:$apps_scale, apps_scale_height: $apps_scale_height, show_searchField: $show_searchField, icon_scaler: $icon_scaler, current_view: $current_view, dock_offset: $dock_offset, folder_offset: $folder_offset, isActivePage: selectedPage == 2, width: geometry.size.width, height: geometry.size.height).frame(maxWidth: geometry.size.width, maxHeight:geometry.size.height).zIndex(0).tag(2).frame(width:search_width, height: search_height)
+                        ForEach(0..<externalPageCount, id: \.self) { page in
+                            apps_second(apps_scale: $apps_scale, apps_scale_height: $apps_scale_height,
+                                        show_searchField: $show_searchField, icon_scaler: $icon_scaler,
+                                        current_view: $current_view, dock_offset: $dock_offset,
+                                        folder_offset: $folder_offset, externalApps: externalApps, pageIndex: page,
+                                        isActivePage: selectedPage == page + 2,
+                                        width: geometry.size.width, height: geometry.size.height)
+                                .frame(maxWidth: geometry.size.width, maxHeight: geometry.size.height)
+                                .zIndex(0).tag(page + 2)
+                                .frame(width: search_width, height: search_height)
+                        }
                     }.layoutPriority(1).tabViewStyle(PageTabViewStyle(indexDisplayMode: .never)).animation(.easeInOut, value: selectedPage).onAppear() {
                         UIScrollView.appearance().bounces = false
                     }.opacity(1/(Double(dock_offset) + 1)).grayscale(show_multitasking == true ? 0.99 : 0).opacity(show_multitasking == true ? 0.3 : 1)
@@ -2902,23 +2916,18 @@ struct HomeScreen: View {
                         } label: {
                             Image(systemName: "magnifyingglass").resizable().font(Font.title.weight(.heavy)).foregroundColor(selectedPage == 0 ? Color.white : Color.init(red: 146/255, green: 146/255, blue: 146/255)).frame(width: 7.9, height:7.9).padding(0)
                         }
-                        Button {
-                            withAnimation {
-                                selectedPage = 1
+                        ForEach(1...(externalPageCount + 1), id: \.self) { page in
+                            Button {
+                                withAnimation { selectedPage = page }
+                            } label: {
+                                Circle()
+                                    .fill(selectedPage == page ? Color.white : Color(red: 146/255, green: 146/255, blue: 146/255))
+                                    .frame(width: 7.9, height: 7.9)
                             }
-                        } label: {
-                            Circle().fill(selectedPage == 1 ? Color.white : Color.init(red: 146/255, green: 146/255, blue: 146/255)).frame(height:7.9).padding(0)
                         }
                         Button {
                             withAnimation {
-                                selectedPage = 2
-                            }
-                        } label: {
-                            Circle().fill(selectedPage == 2 ? Color.white : Color.init(red: 146/255, green: 146/255, blue: 146/255)).frame(height:7.9).padding(0)
-                        }
-                        Button {
-                            withAnimation {
-                                selectedPage = min(selectedPage + 1, 2)
+                                selectedPage = min(selectedPage + 1, externalPageCount + 1)
                             }
                         } label: {
                             Color.clear.frame(width: geometry.size.width/2.4, height:7.9)
@@ -2927,6 +2936,9 @@ struct HomeScreen: View {
                 }.opacity(show_multitasking == true ? 0 : 1).allowsHitTesting(folder_offset == 0)
             }
             .clipped() // Clip only at the full simulated-phone boundary.
+            .onChange(of: externalApps.shortcuts.count) { _ in
+                selectedPage = min(selectedPage, externalPageCount + 1)
+            }
             .onAppear() {
                 //MARK — iPhone 8
                 if UIScreen.main.bounds.width == 375 && UIScreen.main.bounds.height == 667 {
