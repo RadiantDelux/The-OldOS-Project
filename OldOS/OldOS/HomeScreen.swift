@@ -3184,13 +3184,13 @@ struct search: View {
 }
 
 struct search_results_view: View {
-    @ObservedObject var externalApps: OldOSExternalAppStore
     @State private var showExternalError = false
     var apps: [app_search_id_ext]
     @Binding var search: String
     @Binding var apps_scale: CGFloat
     @Binding var current_view: String
     @Binding var dock_offset: CGFloat
+    @ObservedObject var externalApps: OldOSExternalAppStore
     var body: some View {
         GeometryReader { geometry in
             VStack(spacing:0) {
@@ -4684,7 +4684,7 @@ struct OldOSShortcutIcon: View {
                         .frame(width: size * 0.52, height: size * 0.52)
                 }
                 LinearGradient(colors: [.white.opacity(0.45), .clear], startPoint: .top, endPoint: .bottom)
-                    .frame(height: size * 0.45).clipShape(Ellipse().scaleEffect(x: 1.35, y: 1.5, anchor: .top))
+                    .frame(height: size * 0.45).clipShape(Ellipse())
             }
             .frame(width: size, height: size)
             .clipShape(RoundedRectangle(cornerRadius: size * 0.20))
