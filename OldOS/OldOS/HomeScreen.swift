@@ -4714,100 +4714,394 @@ struct OldOSShortcutIcon: View {
         }.frame(width: UIScreen.main.bounds.width / (390 / 85))
     }
 }
-struct OldOSShortcutEditor: View {
-    @Environment(\.dismiss) private var dismiss
-    @State private var item: OldOSExternalShortcut
-    @State private var photo: PhotosPickerItem?
-    let onSave: (OldOSExternalShortcut) -> Void
-    init(shortcut: OldOSExternalShortcut, onSave: @escaping (OldOSExternalShortcut) -> Void) {
-        _item = State(initialValue: shortcut)
-        self.onSave = onSave
+struct OldOSKnownApp: Identifiable {
+    let name: String
+    let url: String
+    let symbol: String
+    let color: String
+
+    var id: String { url }
+
+    init(_ name: String, _ url: String, _ symbol: String, _ color: String) {
+        self.name = name
+        self.url = url
+        self.symbol = symbol
+        self.color = color
     }
-    private var canSave: Bool { item.isValid && !item.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-    private let samples: [(String,String,String,String)] = [
-        ("WhatsApp","whatsapp://","message.fill","green"),
-        ("YouTube","youtube://","play.rectangle.fill","red"),
-        ("Spotify","spotify://","music.note","green"),
-        ("Telegram","tg://","paperplane.fill","blue"),
-        ("Discord","discord://","bubble.left.and.bubble.right.fill","purple"),
-        ("Instagram","instagram://app","camera.fill","purple"),
-        ("Google Maps","comgooglemaps://","map.fill","green"),
-        ("Shortcuts","shortcuts://","square.stack.3d.up.fill","purple")
+
+    // A curated list, not a privileged enumeration of every application.
+    // Scheme names must also appear in LSApplicationQueriesSchemes in Info.plist.
+    static let all: [OldOSKnownApp] = [
+        .init("WhatsApp", "whatsapp://", "message.fill", "green"),
+        .init("YouTube", "youtube://", "play.rectangle.fill", "red"),
+        .init("Spotify", "spotify://", "music.note", "green"),
+        .init("Telegram", "tg://", "paperplane.fill", "blue"),
+        .init("Discord", "discord://", "bubble.left.and.bubble.right.fill", "purple"),
+        .init("Instagram", "instagram://app", "camera.fill", "purple"),
+        .init("Google Maps", "comgooglemaps://", "map.fill", "green"),
+        .init("Chrome", "googlechrome://", "globe", "blue"),
+        .init("Gmail", "googlegmail://", "envelope.fill", "red"),
+        .init("Google Drive", "googledrive://", "folder.fill", "green"),
+        .init("Google Photos", "googlephotos://", "photo.fill", "orange"),
+        .init("Google Calendar", "googlecalendar://", "calendar", "blue"),
+        .init("Google Translate", "googletranslate://", "character.book.closed.fill", "blue"),
+        .init("Waze", "waze://", "map.fill", "blue"),
+        .init("Messenger", "fb-messenger://", "message.fill", "blue"),
+        .init("Facebook", "fb://", "person.2.fill", "blue"),
+        .init("X / Twitter", "twitter://", "bubble.left.fill", "gray"),
+        .init("Snapchat", "snapchat://", "camera.fill", "orange"),
+        .init("Pinterest", "pinterest://", "pin.fill", "red"),
+        .init("Reddit", "reddit://", "person.3.fill", "orange"),
+        .init("Zoom", "zoomus://", "video.fill", "blue"),
+        .init("Slack", "slack://", "number", "purple"),
+        .init("Notion", "notion://", "doc.text", "gray"),
+        .init("Twitch", "twitch://", "video.fill", "purple"),
+        .init("PayPal", "paypal://", "creditcard.fill", "blue"),
+        .init("Microsoft Teams", "msteams://", "person.2.fill", "purple"),
+        .init("Outlook", "ms-outlook://", "envelope.fill", "blue"),
+        .init("OneDrive", "ms-onedrive://", "cloud.fill", "blue"),
+        .init("Microsoft Edge", "microsoft-edge://", "globe", "blue"),
+        .init("Firefox", "firefox://", "globe", "orange"),
+        .init("Brave", "brave://", "globe", "orange"),
+        .init("VLC", "vlc://", "play.fill", "orange"),
+        .init("Uber", "uber://", "car.fill", "gray"),
+        .init("Duolingo", "duolingo://", "text.book.closed.fill", "green"),
+        .init("Shazam", "shazam://", "waveform", "blue"),
+        .init("Google Search", "googleapp://", "magnifyingglass", "blue"),
+        .init("Google Meet", "gmeet://", "video.fill", "green"),
+        .init("LinkedIn", "linkedin://", "person.crop.square.fill", "blue"),
+        .init("Apple Shortcuts", "shortcuts://", "square.stack.3d.up.fill", "purple")
     ]
+}
+
+/// Detects only catalogue entries with declared launch schemes.
+/// This does not imply access to the full installed-app database.
+struct OldOSKnownAppPicker: View {
+    @EnvironmentObject private var oldOSKeyboard: OldOSKeyboardController
+    let onSelect: (OldOSKnownApp) -> Void
+    let onBack: () -> Void
+
+    @State private var searchText: String = ""
+    @State private var showCatalog = false
+    @State private var detectedIds = Set<String>()
+
+    private var filteredApps: [OldOSKnownApp] {
+        OldOSKnownApp.all.filter { entry in
+            (showCatalog || detectedIds.contains(entry.id)) &&
+            (searchText.isEmpty || entry.name.localizedCaseInsensitiveContains(searchText))
+        }
+    }
+
+    private func refreshInstalledList() {
+        detectedIds = Set(OldOSKnownApp.all.compactMap { entry in
+            guard let url = URL(string: entry.url),
+                  UIApplication.shared.canOpenURL(url) else { return nil }
+            return entry.id
+        })
+    }
+
     var body: some View {
-        NavigationView {
-            Form {
-                Section("Icon") {
-                    HStack(spacing: 20) {
-                        OldOSShortcutIcon(shortcut: item, size: 60)
-                        PhotosPicker(selection: $photo, matching: .images) {
-                            Label("Choose Photo", systemImage: "photo")
-                        }
-                        if item.icon != nil {
-                            Button("Clear") { item.icon = nil }
-                        }
-                    }
-                    Picker("Icon Color", selection: $item.color) {
-                        ForEach(["blue","green","red","orange","purple","gray"], id: \.self) {
-                            Text($0.capitalized).tag($0)
-                        }
-                    }
-                    Picker("Symbol", selection: $item.symbol) {
-                        ForEach(["app.fill","plus","message.fill","play.rectangle.fill","music.note",
-                                 "gamecontroller.fill","camera.fill","envelope.fill","globe",
-                                 "star.fill","map.fill","paperplane.fill","folder.fill"], id: \.self) {
-                            Label($0, systemImage: $0).tag($0)
-                        }
-                    }
+        VStack(spacing: 0) {
+            HStack {
+                Button {
+                    oldOSKeyboard.hide()
+                    onBack()
+                } label: {
+                    Image(systemName: "chevron.left")
+                    Text("Back")
                 }
-                Section("Application") {
-                    TextField("Name", text: $item.name)
-                    TextField("App URL, universal link, or Shortcut", text: $item.url)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .keyboardType(.URL)
-                    Menu("Use Known URL Scheme") {
-                        ForEach(samples.indices, id: \.self) { n in
-                            Button(samples[n].0) {
-                                item.name = samples[n].0
-                                item.url = samples[n].1
-                                item.symbol = samples[n].2
-                                item.color = samples[n].3
+                Spacer()
+                Text("Add Applications")
+                    .font(.custom("Helvetica Neue Bold", size: 19))
+                Spacer()
+                Button {
+                    refreshInstalledList()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .accessibilityLabel("Refresh")
+            }
+            .padding(12)
+            .foregroundColor(.white)
+            .background(LinearGradient(
+                colors: [Color(red: 0.70, green: 0.75, blue: 0.82),
+                         Color(red: 0.34, green: 0.45, blue: 0.61)],
+                startPoint: .top, endPoint: .bottom))
+
+            HStack(spacing: 5) {
+                Image(systemName: "magnifyingglass").foregroundColor(.gray)
+                OldOSTextField("Search applications", text: $searchText,
+                               configuration: .search, height: 32)
+                    .frame(height: 35)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 7)
+            .background(Color.white)
+
+            HStack(spacing: 0) {
+                Button {
+                    oldOSKeyboard.hide()
+                    showCatalog = false
+                    refreshInstalledList()
+                } label: {
+                    Text("Detected (\(detectedIds.count))")
+                        .frame(maxWidth: .infinity).padding(.vertical, 9)
+                }
+                .background(showCatalog ? Color.white : Color(red: 0.70, green: 0.77, blue: 0.87))
+                Button {
+                    oldOSKeyboard.hide()
+                    showCatalog = true
+                } label: {
+                    Text("All Supported")
+                        .frame(maxWidth: .infinity).padding(.vertical, 9)
+                }
+                .background(showCatalog ? Color(red: 0.70, green: 0.77, blue: 0.87) : Color.white)
+            }
+            .font(.custom("Helvetica Neue Bold", size: 14))
+            .foregroundColor(.black)
+
+            ScrollView {
+                LazyVStack(spacing: 1) {
+                    if filteredApps.isEmpty {
+                        VStack(spacing: 12) {
+                            Text(showCatalog ? "No matching applications" : "No supported apps detected")
+                                .font(.headline)
+                            Text(showCatalog
+                                 ? "Try a different search, or create a Shortcut manually."
+                                 : "iOS can only detect apps with known URL schemes. Tap All Supported to browse and add other apps.")
+                                .multilineTextAlignment(.center)
+                            if !showCatalog {
+                                Button("Browse All Supported") {
+                                    oldOSKeyboard.hide()
+                                    showCatalog = true
+                                }
+                                .padding()
                             }
                         }
+                        .padding(25).foregroundColor(.gray)
                     }
-                    if !item.url.isEmpty && !item.isValid {
-                        Text("Enter a valid URL.").foregroundColor(.red)
+                    ForEach(filteredApps) { entry in
+                        Button {
+                            oldOSKeyboard.hide()
+                            onSelect(entry)
+                        } label: {
+                            HStack(spacing: 12) {
+                                OldOSShortcutIcon(
+                                    shortcut: OldOSExternalShortcut(
+                                        name: entry.name, url: entry.url,
+                                        symbol: entry.symbol, color: entry.color),
+                                    size: 43
+                                )
+                                .frame(width: 55)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(entry.name)
+                                        .font(.custom("Helvetica Neue Bold", size: 16))
+                                        .foregroundColor(.black)
+                                    if showCatalog {
+                                        Text(detectedIds.contains(entry.id) ? "Detected on device" : "Not detected - can still add")
+                                            .font(.caption)
+                                            .foregroundColor(.gray)
+                                    }
+                                }
+                                Spacer()
+                                Image(systemName: "plus.circle.fill")
+                                    .foregroundColor(Color(red: 0.19, green: 0.43, blue: 0.73))
+                            }
+                            .padding(.horizontal, 9).frame(height: 67)
+                            .background(Color(red: 0.94, green: 0.95, blue: 0.96))
+                        }
+                        .buttonStyle(.plain)
                     }
-                }
-                Section("Shortcuts Support") {
-                    Text("For an Apple Shortcut, use shortcuts://run-shortcut?name=My%20Shortcut")
-                    Text("Only apps supporting URLs or Shortcuts can be opened. iOS does not allow automatic app discovery.")
                 }
             }
-            .navigationTitle("Add to OldOS")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Save") {
-                        item.name = item.name.trimmingCharacters(in: .whitespacesAndNewlines)
-                        item.url = item.url.trimmingCharacters(in: .whitespacesAndNewlines)
-                        onSave(item); dismiss()
-                    }.disabled(!canSave)
+            .padding(.bottom, oldOSKeyboard.isVisible ? 260 : 0)
+
+            Text("Only apps with supported, predeclared URL schemes can be detected. Other installed apps may not appear; use an Apple Shortcut for those.")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .padding(9)
+                .frame(maxWidth: .infinity)
+                .background(Color(red: 0.92, green: 0.93, blue: 0.94))
+        }
+        .background(Color(red: 0.89, green: 0.91, blue: 0.94))
+        .onAppear(perform: refreshInstalledList)
+    }
+}
+
+struct OldOSShortcutEditor: View {
+    @EnvironmentObject private var oldOSKeyboard: OldOSKeyboardController
+    @State private var item: OldOSExternalShortcut
+    @State private var photo: PhotosPickerItem?
+    @State private var showInstalledPicker = false
+    @State private var shortcutName = ""
+    let onSave: (OldOSExternalShortcut) -> Void
+    let onCancel: () -> Void
+
+    init(shortcut: OldOSExternalShortcut,
+         onSave: @escaping (OldOSExternalShortcut) -> Void,
+         onCancel: @escaping () -> Void) {
+        _item = State(initialValue: shortcut)
+        self.onSave = onSave
+        self.onCancel = onCancel
+    }
+
+    private var canSave: Bool {
+        item.isValid && !item.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func choose(_ entry: OldOSKnownApp) {
+        item.name = entry.name
+        item.url = entry.url
+        item.symbol = entry.symbol
+        item.color = entry.color
+        item.icon = nil
+        showInstalledPicker = false
+    }
+
+    private func assignShortcutLink() {
+        let name = shortcutName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        var components = URLComponents()
+        components.scheme = "shortcuts"
+        components.host = "run-shortcut"
+        components.queryItems = [URLQueryItem(name: "name", value: name)]
+        if let link = components.url?.absoluteString {
+            item.url = link
+            if item.name.isEmpty { item.name = name }
+        }
+    }
+
+    var body: some View {
+        Group {
+            if showInstalledPicker {
+                OldOSKnownAppPicker(
+                    onSelect: choose,
+                    onBack: { showInstalledPicker = false }
+                )
+            } else {
+                NavigationView {
+                    Form {
+                        Section("Application") {
+                            Button {
+                                oldOSKeyboard.hide()
+                                showInstalledPicker = true
+                            } label: {
+                                HStack {
+                                    Image(systemName: "square.grid.2x2.fill")
+                                    Text("Choose an installed app")
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                }
+                            }
+                            Text("Select from apps OldOS can detect on your iPhone.")
+                                .font(.footnote).foregroundColor(.secondary)
+                            HStack {
+                                Text("Name")
+                                    .frame(width: 75, alignment: .leading)
+                                OldOSTextField("App name", text: $item.name,
+                                               configuration: .standard, height: 32)
+                                    .frame(height: 36)
+                            }
+                            HStack {
+                                Text("Link")
+                                    .frame(width: 75, alignment: .leading)
+                                OldOSTextField("App URL or Shortcut", text: $item.url,
+                                               configuration: .url, height: 32)
+                                    .frame(height: 36)
+                            }
+                            if !item.url.isEmpty && !item.isValid {
+                                Text("Enter an app URL or Shortcut link.")
+                                    .foregroundColor(.red).font(.footnote)
+                            }
+                        }
+
+                        Section("Classic iOS 4 Icon") {
+                            HStack(spacing: 15) {
+                                OldOSShortcutIcon(shortcut: item, size: 60)
+                                PhotosPicker(selection: $photo, matching: .images) {
+                                    Label("Choose Photo", systemImage: "photo")
+                                }
+                                if item.icon != nil {
+                                    Button("Clear") { item.icon = nil }
+                                }
+                            }
+                            Picker("Color", selection: $item.color) {
+                                ForEach(["blue","green","red","orange","purple","gray"], id: \.self) {
+                                    Text($0.capitalized).tag($0)
+                                }
+                            }
+                            Picker("Symbol", selection: $item.symbol) {
+                                ForEach(["app.fill","plus","message.fill","play.rectangle.fill",
+                                         "music.note","gamecontroller.fill","camera.fill",
+                                         "envelope.fill","globe","star.fill","map.fill",
+                                         "paperplane.fill","folder.fill"], id: \.self) {
+                                    Label($0, systemImage: $0).tag($0)
+                                }
+                            }
+                        }
+
+                        Section("Other Apps - Apple Shortcuts") {
+                            Text("For apps not detected above, open Shortcuts and create an action called 'Open App'. Select your app in Apple's app picker and name the Shortcut.")
+                                .font(.footnote)
+                            HStack {
+                                Text("Shortcut")
+                                    .frame(width: 78, alignment: .leading)
+                                OldOSTextField("Shortcut name", text: $shortcutName,
+                                               configuration: .standard, height: 32)
+                                    .frame(height: 36)
+                            }
+                            Button("Use this Shortcut") {
+                                oldOSKeyboard.hide()
+                                assignShortcutLink()
+                            }
+                            .disabled(shortcutName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            Button("Open Shortcuts") {
+                                oldOSKeyboard.hide()
+                                if let url = URL(string: "shortcuts://") {
+                                    UIApplication.shared.open(url)
+                                }
+                            }
+                            Text("Once created, return to OldOS and save this icon.")
+                                .font(.footnote).foregroundColor(.secondary)
+                        }
+                    }
+                    .safeAreaInset(edge: .bottom) {
+                        Color.clear.frame(height: oldOSKeyboard.isVisible ? 250 : 0)
+                    }
+                    .navigationTitle("Add to OldOS")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .navigationBarLeading) {
+                            Button("Cancel") {
+                                oldOSKeyboard.hide()
+                                onCancel()
+                            }
+                        }
+                        ToolbarItem(placement: .navigationBarTrailing) {
+                            Button("Save") {
+                                oldOSKeyboard.hide()
+                                item.name = item.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                                item.url = item.url.trimmingCharacters(in: .whitespacesAndNewlines)
+                                onSave(item)
+                            }
+                            .disabled(!canSave)
+                        }
+                    }
                 }
+                .navigationViewStyle(.stack)
             }
         }
         .onChange(of: photo) { chosen in
             Task {
                 guard let chosen = chosen,
                       let data = try? await chosen.loadTransferable(type: Data.self),
-                      let image = UIImage(data: data), image.size.width > 0, image.size.height > 0 else { return }
+                      let image = UIImage(data: data),
+                      image.size.width > 0, image.size.height > 0 else { return }
                 let size: CGFloat = 144
                 let factor = max(size / image.size.width, size / image.size.height)
                 let drawSize = CGSize(width: image.size.width * factor, height: image.size.height * factor)
                 let rendered = UIGraphicsImageRenderer(size: CGSize(width: size, height: size)).image { _ in
-                    image.draw(in: CGRect(x: (size - drawSize.width)/2, y: (size - drawSize.height)/2,
+                    image.draw(in: CGRect(x: (size - drawSize.width) / 2,
+                                          y: (size - drawSize.height) / 2,
                                           width: drawSize.width, height: drawSize.height))
                 }
                 let bytes = rendered.jpegData(compressionQuality: 0.82)
