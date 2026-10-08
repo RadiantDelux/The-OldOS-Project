@@ -33,6 +33,49 @@
 	</array>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<!-- Public URL scheme discovery is limited to 50 declarations on iOS 16. -->
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>whatsapp</string>
+		<string>youtube</string>
+		<string>spotify</string>
+		<string>tg</string>
+		<string>discord</string>
+		<string>instagram</string>
+		<string>comgooglemaps</string>
+		<string>googlechrome</string>
+		<string>googlegmail</string>
+		<string>googledrive</string>
+		<string>googlephotos</string>
+		<string>googlecalendar</string>
+		<string>googletranslate</string>
+		<string>waze</string>
+		<string>fb-messenger</string>
+		<string>fb</string>
+		<string>twitter</string>
+		<string>snapchat</string>
+		<string>pinterest</string>
+		<string>reddit</string>
+		<string>zoomus</string>
+		<string>slack</string>
+		<string>notion</string>
+		<string>twitch</string>
+		<string>paypal</string>
+		<string>msteams</string>
+		<string>ms-outlook</string>
+		<string>ms-onedrive</string>
+		<string>microsoft-edge</string>
+		<string>firefox</string>
+		<string>brave</string>
+		<string>vlc</string>
+		<string>uber</string>
+		<string>duolingo</string>
+		<string>shazam</string>
+		<string>googleapp</string>
+		<string>gmeet</string>
+		<string>linkedin</string>
+		<string>shortcuts</string>
+	</array>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSAppTransportSecurity</key>

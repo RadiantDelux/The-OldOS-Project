@@ -2267,6 +2267,8 @@
 //
 
 import SwiftUI
+import PhotosUI
+import UniformTypeIdentifiers
 import CoreTelephony
 import PureSwiftUITools
 import Network
@@ -2785,8 +2787,13 @@ struct HomeScreen: View {
     @Binding var instant_multitasking_change: Bool
     @Binding var folder_offset: CGFloat
     @Binding var show_folder: Bool
+    @StateObject private var externalApps = OldOSExternalAppStore()
+    @State private var editingShortcut: OldOSExternalShortcut?
     @GestureState  var dragOffset: CGFloat = 0
     var userDefaults = UserDefaults.standard
+    private var externalPageCount: Int {
+        1 + (max(0, externalApps.items.count - 14) + 14) / 15
+    }
     var body: some View {
         GeometryReader { geometry in
             ZStack {
@@ -2869,7 +2876,7 @@ struct HomeScreen: View {
                     Spacer().frame(height: 30)
 //                    Spacer().frame(height: folder_offset)
                     TabView(selection: $selectedPage) {
-                        search(width: $search_width, height: $search_height, show_searchField: $show_searchField, apps_scale: $apps_scale, current_view: $current_view, dock_offset: $dock_offset).frame(maxWidth: geometry.size.width, maxHeight:geometry.size.height).zIndex(0).clipped().tag(0)
+                        search(width: $search_width, height: $search_height, show_searchField: $show_searchField, apps_scale: $apps_scale, current_view: $current_view, dock_offset: $dock_offset, externalApps: externalApps).frame(maxWidth: geometry.size.width, maxHeight:geometry.size.height).zIndex(0).clipped().tag(0)
                         apps(apps_scale:$apps_scale, apps_scale_height: $apps_scale_height, show_searchField: $show_searchField, icon_scaler: $icon_scaler, current_view: $current_view, dock_offset: $dock_offset, folder_offset: $folder_offset, show_folder: $show_folder, isActivePage: selectedPage == 1, width: geometry.size.width, height: geometry.size.height).frame(maxWidth: geometry.size.width, maxHeight:geometry.size.height).zIndex(0).tag(1)    .overlay(
                             GeometryReader { proxy in
                                 Color.clear.hidden().onAppear() {
@@ -2878,7 +2885,18 @@ struct HomeScreen: View {
                                 }
                             }
                         )
-                        apps_second(apps_scale:$apps_scale, apps_scale_height: $apps_scale_height, show_searchField: $show_searchField, icon_scaler: $icon_scaler, current_view: $current_view, dock_offset: $dock_offset, folder_offset: $folder_offset, isActivePage: selectedPage == 2, width: geometry.size.width, height: geometry.size.height).frame(maxWidth: geometry.size.width, maxHeight:geometry.size.height).zIndex(0).tag(2).frame(width:search_width, height: search_height)
+                        ForEach(0..<externalPageCount, id: \.self) { page in
+                            apps_second(apps_scale: $apps_scale, apps_scale_height: $apps_scale_height,
+                                        show_searchField: $show_searchField, icon_scaler: $icon_scaler,
+                                        current_view: $current_view, dock_offset: $dock_offset,
+                                        folder_offset: $folder_offset, externalApps: externalApps,
+                                        editingShortcut: $editingShortcut, pageIndex: page,
+                                        isActivePage: selectedPage == page + 2,
+                                        width: geometry.size.width, height: geometry.size.height)
+                                .frame(maxWidth: geometry.size.width, maxHeight: geometry.size.height)
+                                .zIndex(0).tag(page + 2)
+                                .frame(width: search_width, height: search_height)
+                        }
                     }.layoutPriority(1).tabViewStyle(PageTabViewStyle(indexDisplayMode: .never)).animation(.easeInOut, value: selectedPage).onAppear() {
                         UIScrollView.appearance().bounces = false
                     }.opacity(1/(Double(dock_offset) + 1)).grayscale(show_multitasking == true ? 0.99 : 0).opacity(show_multitasking == true ? 0.3 : 1)
@@ -2902,31 +2920,47 @@ struct HomeScreen: View {
                         } label: {
                             Image(systemName: "magnifyingglass").resizable().font(Font.title.weight(.heavy)).foregroundColor(selectedPage == 0 ? Color.white : Color.init(red: 146/255, green: 146/255, blue: 146/255)).frame(width: 7.9, height:7.9).padding(0)
                         }
-                        Button {
-                            withAnimation {
-                                selectedPage = 1
+                        ForEach(1...(externalPageCount + 1), id: \.self) { page in
+                            Button {
+                                withAnimation { selectedPage = page }
+                            } label: {
+                                Circle()
+                                    .fill(selectedPage == page ? Color.white : Color(red: 146/255, green: 146/255, blue: 146/255))
+                                    .frame(width: 7.9, height: 7.9)
                             }
-                        } label: {
-                            Circle().fill(selectedPage == 1 ? Color.white : Color.init(red: 146/255, green: 146/255, blue: 146/255)).frame(height:7.9).padding(0)
                         }
                         Button {
                             withAnimation {
-                                selectedPage = 2
-                            }
-                        } label: {
-                            Circle().fill(selectedPage == 2 ? Color.white : Color.init(red: 146/255, green: 146/255, blue: 146/255)).frame(height:7.9).padding(0)
-                        }
-                        Button {
-                            withAnimation {
-                                selectedPage = min(selectedPage + 1, 2)
+                                selectedPage = min(selectedPage + 1, externalPageCount + 1)
                             }
                         } label: {
                             Color.clear.frame(width: geometry.size.width/2.4, height:7.9)
                         }
                     }.padding(.bottom, 110).offset(y:dock_offset).offset(y:bottom_indicator_offset).offset(y:folder_offset).allowsHitTesting(folder_offset == 0)
                 }.opacity(show_multitasking == true ? 0 : 1).allowsHitTesting(folder_offset == 0)
+                // Keep the editor in the same hosting hierarchy as the OldOS keyboard.
+                // A native SwiftUI .sheet would cover the keyboard overlay.
+                if let selectedShortcut = editingShortcut {
+                    OldOSShortcutEditor(
+                        shortcut: selectedShortcut,
+                        onSave: { updated in
+                            externalApps.upsert(updated)
+                            editingShortcut = nil
+                        },
+                        onCancel: {
+                            editingShortcut = nil
+                        }
+                    )
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    .background(Color.black)
+                    .zIndex(1000)
+                    .transition(.opacity)
+                }
             }
             .clipped() // Clip only at the full simulated-phone boundary.
+            .onChange(of: externalApps.items.count) { _ in
+                selectedPage = min(selectedPage, externalPageCount + 1)
+            }
             .onAppear() {
                 //MARK — iPhone 8
                 if UIScreen.main.bounds.width == 375 && UIScreen.main.bounds.height == 667 {
@@ -3140,6 +3174,7 @@ struct search: View {
     @Binding var apps_scale: CGFloat
     @Binding var current_view: String
     @Binding var dock_offset: CGFloat
+    @ObservedObject var externalApps: OldOSExternalAppStore
     private let gradient = LinearGradient([.white, .white], to: .trailing)
     var body: some View {
         ZStack {
@@ -3162,23 +3197,40 @@ struct search: View {
                     Spacer(minLength: 20)
                 } .ps_innerShadow(.capsule(gradient), radius:2).padding([.leading, .trailing])
                 Spacer().frame(height: 10)
-                search_results_view(apps: apps, search: $search, apps_scale: $apps_scale, current_view: $current_view, dock_offset: $dock_offset).padding([.leading, .trailing]).cornerRadius(12)
+                search_results_view(apps: apps, search: $search, apps_scale: $apps_scale, current_view: $current_view, dock_offset: $dock_offset, externalApps: externalApps).padding([.leading, .trailing]).cornerRadius(12)
             }
         }.frame(width:width, height: height)
     }
 }
 
 struct search_results_view: View {
+    @State private var showExternalError = false
     var apps: [app_search_id_ext]
     @Binding var search: String
     @Binding var apps_scale: CGFloat
     @Binding var current_view: String
     @Binding var dock_offset: CGFloat
+    @ObservedObject var externalApps: OldOSExternalAppStore
     var body: some View {
         GeometryReader { geometry in
             VStack(spacing:0) {
                 ScrollView(showsIndicators: true) {
                     VStack(spacing: 0)  {
+                        ForEach(externalApps.items.filter { $0.name.localizedCaseInsensitiveContains(search) }) { shortcut in
+                            Button {
+                                OldOSExternalAppStore.launch(shortcut) { showExternalError = true }
+                            } label: {
+                                HStack {
+                                    OldOSShortcutIcon(shortcut: shortcut, size: 33)
+                                        .frame(width: 44, height: 44)
+                                    Text(shortcut.name).foregroundColor(.black)
+                                        .font(.custom("Helvetica Neue Bold", fixedSize: 16))
+                                    Spacer()
+                                }
+                                .frame(height: 50)
+                                .background(Color(red: 228/255, green: 229/255, blue: 230/255))
+                            }.buttonStyle(.plain)
+                        }
                         ForEach(apps.filter{$0.name.localizedCaseInsensitiveContains(search)}.sorted(by: {$0.name > $1.name}), id:\.id) { application in
                             search_result_item(apps: apps, search: $search, apps_scale: $apps_scale, current_view: $current_view, dock_offset: $dock_offset, application: application)
                             
@@ -3186,6 +3238,10 @@ struct search_results_view: View {
                     }
                 }.frame(height: geometry.size.height - 40).background(Color(red: 228/255, green: 229/255, blue: 230/255)).cornerRadius(12)
             }
+        }.alert("Could not Open App", isPresented: $showExternalError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("The app could not be opened. Check its URL scheme or use an Apple Shortcut.")
         }.onAppear() {
             //UIScrollView.appearance().bounces = true -> There's something weird going on where we can't readily modify the bounce value of our scrollviews in the TabView. Therefore, our app pages bounce, when they shouldn't. For now, we'll compromise and have the search not bounce, instead of the apps bouncing.
         }.onDisappear() {
@@ -3782,43 +3838,88 @@ extension View {
 struct apps_second: View {
     @Binding var apps_scale: CGFloat
     @Binding var apps_scale_height: CGFloat
-    @Binding var show_searchField:Bool
+    @Binding var show_searchField: Bool
     @Binding var icon_scaler: CGFloat
     @Binding var current_view: String
     @Binding var dock_offset: CGFloat
     @Binding var folder_offset: CGFloat
+    @ObservedObject var externalApps: OldOSExternalAppStore
+    @Binding var editingShortcut: OldOSExternalShortcut?
+    var pageIndex: Int
     var isActivePage: Bool
     var width: CGFloat
     var height: CGFloat
+    @State private var launchError = false
+    @State private var errorMessage = ""
+    @State private var exporting = false
+    @State private var importing = false
 
-    private let flyX: CGFloat = UIScreen.main.bounds.width * 0.6
-    private let flyY: CGFloat = UIScreen.main.bounds.height * 0.45
-    private var flyProgress: CGFloat {
-        min(max((apps_scale - 1.0) / 3.0, 0.0), 1.0)
+    private var shortcuts: [OldOSExternalShortcut] {
+        let start = pageIndex == 0 ? 0 : 14 + (pageIndex - 1) * 15
+        return Array(externalApps.items.dropFirst(start).prefix(pageIndex == 0 ? 14 : 15))
     }
-    private var tlOff: CGPoint {
-        CGPoint(x: -flyX * flyProgress, y: -flyY * flyProgress)
+    private var flight: CGFloat { min(max((apps_scale - 1) / 3, 0), 1) }
+    private func flightOffset(_ position: Int) -> CGSize {
+        CGSize(width: (position % 4 < 2 ? -1 : 1) * UIScreen.main.bounds.width * 0.6 * flight,
+               height: (position / 4 < 2 ? -1 : 1) * UIScreen.main.bounds.height * 0.45 * flight)
     }
-    
     var body: some View {
         VStack {
-            LazyVGrid(columns: [
-                GridItem(.fixed(UIScreen.main.bounds.width/(390/85)), spacing: 1),
-                GridItem(.fixed(UIScreen.main.bounds.width/(390/85)), spacing: 1),
-                GridItem(.fixed(UIScreen.main.bounds.width/(390/85)), spacing: 1),
-                GridItem(.fixed(UIScreen.main.bounds.width/(390/85)), spacing: 1)
-            ], alignment: .center, spacing: UIScreen.main.bounds.height/(844/40)*icon_scaler) {
-                app(image_name: "Contacts", app_name: "Contacts", current_view: $current_view, apps_scale: $apps_scale, dock_offset: $dock_offset, folder_offset: $folder_offset, quadrantOffset: tlOff)
-                
+            LazyVGrid(columns: Array(repeating: GridItem(.fixed(UIScreen.main.bounds.width / (390 / 85)), spacing: 1), count: 4),
+                      spacing: UIScreen.main.bounds.height / (844 / 40) * icon_scaler) {
+                if pageIndex == 0 {
+                    app(image_name: "Contacts", app_name: "Contacts", current_view: $current_view, apps_scale: $apps_scale,
+                        dock_offset: $dock_offset, folder_offset: $folder_offset)
+                        .offset(flightOffset(0))
+                }
+                ForEach(Array(shortcuts.enumerated()), id: \.element.id) { pair in
+                    let shortcut = pair.element
+                    Button {
+                        OldOSExternalAppStore.launch(shortcut) {
+                            errorMessage = "Could not open \(shortcut.name). Check its link and whether the app is installed."
+                            launchError = true
+                        }
+                    } label: {
+                        OldOSShortcutIcon(shortcut: shortcut)
+                    }
+                    .buttonStyle(.plain)
+                    .offset(flightOffset(pair.offset + (pageIndex == 0 ? 1 : 0)))
+                    .contextMenu {
+                        Button("Edit") { editingShortcut = shortcut }
+                        Button("Move Earlier") { externalApps.move(shortcut.id, offset: -1) }
+                        Button("Move Later") { externalApps.move(shortcut.id, offset: 1) }
+                        Button("Delete", role: .destructive) { externalApps.delete(shortcut.id) }
+                    }
+                }
+                Button { editingShortcut = OldOSExternalShortcut() } label: {
+                    OldOSShortcutIcon(shortcut: OldOSExternalShortcut(name: "Add Apps", url: "https://example.com", symbol: "plus", color: "gray"))
+                }
+                .buttonStyle(.plain)
+                .contextMenu {
+                    Button("Export Shortcuts") { exporting = true }
+                    Button("Import Shortcuts") { importing = true }
+                }
             }
-            Spacer().frame(height:UIScreen.main.bounds.height/(844/40)*icon_scaler)
             Spacer()
         }
         .opacity(isActivePage || apps_scale <= 1.001 ? 1 : 0)
         .allowOverflowFromPagingContainer()
-        .onAppear() {
-            UIApplication.shared.endEditing()
+        .fileExporter(isPresented: $exporting, document: OldOSShortcutBackup(items: externalApps.items),
+                      contentType: .json, defaultFilename: "OldOS-Shortcuts") { result in
+            if case .failure(let error) = result { errorMessage = error.localizedDescription; launchError = true }
         }
+        .fileImporter(isPresented: $importing, allowedContentTypes: [.json]) { result in
+            do {
+                let url = try result.get()
+                let scoped = url.startAccessingSecurityScopedResource()
+                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                let data = try Data(contentsOf: url)
+                guard data.count < 8_000_000 else { errorMessage = "Backup too large"; launchError = true; return }
+                externalApps.merge(try JSONDecoder().decode([OldOSExternalShortcut].self, from: data))
+            } catch { errorMessage = error.localizedDescription; launchError = true }
+        }
+        .alert("External App", isPresented: $launchError) { Button("OK", role: .cancel) {} }
+            message: { Text(errorMessage) }
     }
 }
 
@@ -4503,6 +4604,509 @@ private class TouchForwardingView: UIView {
         if isPressed {
             isPressed = false
             onStateChange?(false)
+        }
+    }
+}
+
+// MARK: User-created app shortcuts. Public APIs only; no jailbreak required.
+
+struct OldOSExternalShortcut: Identifiable, Codable {
+    var id: UUID = UUID()
+    var name: String = ""
+    var url: String = ""
+    var symbol: String = "app.fill"
+    var color: String = "blue"
+    var icon: Data? = nil
+    var isValid: Bool {
+        let s = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let link = URL(string: s), let scheme = link.scheme?.lowercased() else { return false }
+        if ["file", "data", "javascript"].contains(scheme) { return false }
+        if ["http", "https"].contains(scheme) { return link.host != nil }
+        return !scheme.isEmpty && s.contains("://")
+    }
+}
+final class OldOSExternalAppStore: ObservableObject {
+    @Published private(set) var items: [OldOSExternalShortcut] = []
+    private let location: URL
+    init() {
+        let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("OldOSCustomApps", isDirectory: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: nil)
+        location = directory.appendingPathComponent("apps.json")
+        if let data = try? Data(contentsOf: location),
+           let value = try? JSONDecoder().decode([OldOSExternalShortcut].self, from: data) {
+            items = Array(value.filter { $0.isValid && !$0.name.isEmpty }.prefix(512))
+        }
+    }
+    func upsert(_ item: OldOSExternalShortcut) {
+        guard item.isValid && !item.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        if let n = items.firstIndex(where: { $0.id == item.id }) { items[n] = item }
+        else if items.count < 512 { items.append(item) }
+        save()
+    }
+    func delete(_ id: UUID) { items.removeAll { $0.id == id }; save() }
+    func move(_ id: UUID, offset: Int) {
+        guard let n = items.firstIndex(where: { $0.id == id }), items.indices.contains(n + offset) else { return }
+        let item = items.remove(at: n); items.insert(item, at: n + offset); save()
+    }
+    func merge(_ imported: [OldOSExternalShortcut]) {
+        for item in imported.prefix(512) where item.isValid && !item.name.isEmpty { upsert(item) }
+    }
+    private func save() {
+        if let data = try? JSONEncoder().encode(items) { try? data.write(to: location, options: .atomic) }
+    }
+    static func launch(_ item: OldOSExternalShortcut, failed: @escaping () -> Void) {
+        guard item.isValid, let url = URL(string: item.url) else { failed(); return }
+        UIApplication.shared.open(url, options: [:]) { success in
+            if !success { DispatchQueue.main.async { failed() } }
+        }
+    }
+}
+struct OldOSShortcutBackup: FileDocument {
+    static var readableContentTypes: [UTType] { [.json] }
+    var items: [OldOSExternalShortcut]
+    init(items: [OldOSExternalShortcut]) { self.items = items }
+    init(configuration: ReadConfiguration) throws {
+        guard let data = configuration.file.regularFileContents else { throw CocoaError(.fileReadCorruptFile) }
+        items = try JSONDecoder().decode([OldOSExternalShortcut].self, from: data)
+    }
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
+        FileWrapper(regularFileWithContents: try JSONEncoder().encode(items))
+    }
+}
+struct OldOSShortcutIcon: View {
+    let shortcut: OldOSExternalShortcut
+    var size: CGFloat = UIScreen.main.bounds.width / (390 / 60)
+    private var tint: Color {
+        switch shortcut.color {
+        case "red": return Color(red: 0.85, green: 0.2, blue: 0.2)
+        case "green": return Color(red: 0.14, green: 0.67, blue: 0.3)
+        case "purple": return Color(red: 0.57, green: 0.34, blue: 0.8)
+        case "orange": return Color(red: 0.9, green: 0.55, blue: 0.17)
+        case "gray": return Color(red: 0.47, green: 0.52, blue: 0.59)
+        default: return Color(red: 0.18, green: 0.51, blue: 0.9)
+        }
+    }
+    var body: some View {
+        VStack(spacing: 0) {
+            ZStack {
+                RoundedRectangle(cornerRadius: size * 0.20).fill(
+                    LinearGradient(colors: [tint.opacity(0.7), tint], startPoint: .top, endPoint: .bottom))
+                if let data = shortcut.icon, let image = UIImage(data: data) {
+                    Image(uiImage: image).resizable().scaledToFill()
+                        .frame(width: size, height: size).clipped()
+                } else {
+                    Image(systemName: shortcut.symbol).resizable().scaledToFit()
+                        .foregroundColor(.white)
+                        .frame(width: size * 0.52, height: size * 0.52)
+                }
+                LinearGradient(colors: [.white.opacity(0.45), .clear], startPoint: .top, endPoint: .bottom)
+                    .frame(height: size * 0.45).clipShape(Ellipse())
+            }
+            .frame(width: size, height: size)
+            .clipShape(RoundedRectangle(cornerRadius: size * 0.20))
+            .overlay(RoundedRectangle(cornerRadius: size * 0.20).stroke(.white.opacity(0.35), lineWidth: 0.8))
+            Text(shortcut.name).foregroundColor(.white)
+                .font(.custom("Helvetica Neue Medium", fixedSize: 13))
+                .lineLimit(1).minimumScaleFactor(0.7)
+                .shadow(color: .black.opacity(0.9), radius: 0.75, x: 0, y: 1.75)
+                .offset(y: -4)
+        }.frame(width: UIScreen.main.bounds.width / (390 / 85))
+    }
+}
+struct OldOSKnownApp: Identifiable {
+    let name: String
+    let url: String
+    let symbol: String
+    let color: String
+
+    var id: String { url }
+
+    init(_ name: String, _ url: String, _ symbol: String, _ color: String) {
+        self.name = name
+        self.url = url
+        self.symbol = symbol
+        self.color = color
+    }
+
+    // A curated list, not a privileged enumeration of every application.
+    // Scheme names must also appear in LSApplicationQueriesSchemes in Info.plist.
+    static let all: [OldOSKnownApp] = [
+        .init("WhatsApp", "whatsapp://", "message.fill", "green"),
+        .init("YouTube", "youtube://", "play.rectangle.fill", "red"),
+        .init("Spotify", "spotify://", "music.note", "green"),
+        .init("Telegram", "tg://", "paperplane.fill", "blue"),
+        .init("Discord", "discord://", "bubble.left.and.bubble.right.fill", "purple"),
+        .init("Instagram", "instagram://app", "camera.fill", "purple"),
+        .init("Google Maps", "comgooglemaps://", "map.fill", "green"),
+        .init("Chrome", "googlechrome://", "globe", "blue"),
+        .init("Gmail", "googlegmail://", "envelope.fill", "red"),
+        .init("Google Drive", "googledrive://", "folder.fill", "green"),
+        .init("Google Photos", "googlephotos://", "photo.fill", "orange"),
+        .init("Google Calendar", "googlecalendar://", "calendar", "blue"),
+        .init("Google Translate", "googletranslate://", "character.book.closed.fill", "blue"),
+        .init("Waze", "waze://", "map.fill", "blue"),
+        .init("Messenger", "fb-messenger://", "message.fill", "blue"),
+        .init("Facebook", "fb://", "person.2.fill", "blue"),
+        .init("X / Twitter", "twitter://", "bubble.left.fill", "gray"),
+        .init("Snapchat", "snapchat://", "camera.fill", "orange"),
+        .init("Pinterest", "pinterest://", "pin.fill", "red"),
+        .init("Reddit", "reddit://", "person.3.fill", "orange"),
+        .init("Zoom", "zoomus://", "video.fill", "blue"),
+        .init("Slack", "slack://", "number", "purple"),
+        .init("Notion", "notion://", "doc.text", "gray"),
+        .init("Twitch", "twitch://", "video.fill", "purple"),
+        .init("PayPal", "paypal://", "creditcard.fill", "blue"),
+        .init("Microsoft Teams", "msteams://", "person.2.fill", "purple"),
+        .init("Outlook", "ms-outlook://", "envelope.fill", "blue"),
+        .init("OneDrive", "ms-onedrive://", "cloud.fill", "blue"),
+        .init("Microsoft Edge", "microsoft-edge://", "globe", "blue"),
+        .init("Firefox", "firefox://", "globe", "orange"),
+        .init("Brave", "brave://", "globe", "orange"),
+        .init("VLC", "vlc://", "play.fill", "orange"),
+        .init("Uber", "uber://", "car.fill", "gray"),
+        .init("Duolingo", "duolingo://", "text.book.closed.fill", "green"),
+        .init("Shazam", "shazam://", "waveform", "blue"),
+        .init("Google Search", "googleapp://", "magnifyingglass", "blue"),
+        .init("Google Meet", "gmeet://", "video.fill", "green"),
+        .init("LinkedIn", "linkedin://", "person.crop.square.fill", "blue"),
+        .init("Apple Shortcuts", "shortcuts://", "square.stack.3d.up.fill", "purple")
+    ]
+}
+
+/// Detects only catalogue entries with declared launch schemes.
+/// This does not imply access to the full installed-app database.
+struct OldOSKnownAppPicker: View {
+    @EnvironmentObject private var oldOSKeyboard: OldOSKeyboardController
+    let onSelect: (OldOSKnownApp) -> Void
+    let onBack: () -> Void
+
+    @State private var searchText: String = ""
+    @State private var showCatalog = false
+    @State private var detectedIds = Set<String>()
+
+    private var filteredApps: [OldOSKnownApp] {
+        OldOSKnownApp.all.filter { entry in
+            (showCatalog || detectedIds.contains(entry.id)) &&
+            (searchText.isEmpty || entry.name.localizedCaseInsensitiveContains(searchText))
+        }
+    }
+
+    private func refreshInstalledList() {
+        detectedIds = Set(OldOSKnownApp.all.compactMap { entry in
+            guard let url = URL(string: entry.url),
+                  UIApplication.shared.canOpenURL(url) else { return nil }
+            return entry.id
+        })
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Button {
+                    oldOSKeyboard.hide()
+                    onBack()
+                } label: {
+                    Image(systemName: "chevron.left")
+                    Text("Back")
+                }
+                Spacer()
+                Text("Add Applications")
+                    .font(.custom("Helvetica Neue Bold", size: 19))
+                Spacer()
+                Button {
+                    refreshInstalledList()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .accessibilityLabel("Refresh")
+            }
+            .padding(12)
+            .foregroundColor(.white)
+            .background(LinearGradient(
+                colors: [Color(red: 0.70, green: 0.75, blue: 0.82),
+                         Color(red: 0.34, green: 0.45, blue: 0.61)],
+                startPoint: .top, endPoint: .bottom))
+
+            HStack(spacing: 5) {
+                Image(systemName: "magnifyingglass").foregroundColor(.gray)
+                OldOSTextField("Search applications", text: $searchText,
+                               configuration: .search, height: 32)
+                    .frame(height: 35)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 7)
+            .background(Color.white)
+
+            HStack(spacing: 0) {
+                Button {
+                    oldOSKeyboard.hide()
+                    showCatalog = false
+                    refreshInstalledList()
+                } label: {
+                    Text("Detected (\(detectedIds.count))")
+                        .frame(maxWidth: .infinity).padding(.vertical, 9)
+                }
+                .background(showCatalog ? Color.white : Color(red: 0.70, green: 0.77, blue: 0.87))
+                Button {
+                    oldOSKeyboard.hide()
+                    showCatalog = true
+                } label: {
+                    Text("All Supported")
+                        .frame(maxWidth: .infinity).padding(.vertical, 9)
+                }
+                .background(showCatalog ? Color(red: 0.70, green: 0.77, blue: 0.87) : Color.white)
+            }
+            .font(.custom("Helvetica Neue Bold", size: 14))
+            .foregroundColor(.black)
+
+            ScrollView {
+                LazyVStack(spacing: 1) {
+                    if filteredApps.isEmpty {
+                        VStack(spacing: 12) {
+                            Text(showCatalog ? "No matching applications" : "No supported apps detected")
+                                .font(.headline)
+                            Text(showCatalog
+                                 ? "Try a different search, or create a Shortcut manually."
+                                 : "iOS can only detect apps with known URL schemes. Tap All Supported to browse and add other apps.")
+                                .multilineTextAlignment(.center)
+                            if !showCatalog {
+                                Button("Browse All Supported") {
+                                    oldOSKeyboard.hide()
+                                    showCatalog = true
+                                }
+                                .padding()
+                            }
+                        }
+                        .padding(25).foregroundColor(.gray)
+                    }
+                    ForEach(filteredApps) { entry in
+                        Button {
+                            oldOSKeyboard.hide()
+                            onSelect(entry)
+                        } label: {
+                            HStack(spacing: 12) {
+                                OldOSShortcutIcon(
+                                    shortcut: OldOSExternalShortcut(
+                                        name: entry.name, url: entry.url,
+                                        symbol: entry.symbol, color: entry.color),
+                                    size: 43
+                                )
+                                .frame(width: 55)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(entry.name)
+                                        .font(.custom("Helvetica Neue Bold", size: 16))
+                                        .foregroundColor(.black)
+                                    if showCatalog {
+                                        Text(detectedIds.contains(entry.id) ? "Detected on device" : "Not detected - can still add")
+                                            .font(.caption)
+                                            .foregroundColor(.gray)
+                                    }
+                                }
+                                Spacer()
+                                Image(systemName: "plus.circle.fill")
+                                    .foregroundColor(Color(red: 0.19, green: 0.43, blue: 0.73))
+                            }
+                            .padding(.horizontal, 9).frame(height: 67)
+                            .background(Color(red: 0.94, green: 0.95, blue: 0.96))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .padding(.bottom, oldOSKeyboard.isVisible ? 260 : 0)
+
+            Text("Only apps with supported, predeclared URL schemes can be detected. Other installed apps may not appear; use an Apple Shortcut for those.")
+                .font(.system(size: 11))
+                .foregroundColor(.secondary)
+                .padding(9)
+                .frame(maxWidth: .infinity)
+                .background(Color(red: 0.92, green: 0.93, blue: 0.94))
+        }
+        .background(Color(red: 0.89, green: 0.91, blue: 0.94))
+        .onAppear(perform: refreshInstalledList)
+    }
+}
+
+struct OldOSShortcutEditor: View {
+    @EnvironmentObject private var oldOSKeyboard: OldOSKeyboardController
+    @State private var item: OldOSExternalShortcut
+    @State private var photo: PhotosPickerItem?
+    @State private var showInstalledPicker = false
+    @State private var shortcutName = ""
+    let onSave: (OldOSExternalShortcut) -> Void
+    let onCancel: () -> Void
+
+    init(shortcut: OldOSExternalShortcut,
+         onSave: @escaping (OldOSExternalShortcut) -> Void,
+         onCancel: @escaping () -> Void) {
+        _item = State(initialValue: shortcut)
+        self.onSave = onSave
+        self.onCancel = onCancel
+    }
+
+    private var canSave: Bool {
+        item.isValid && !item.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func choose(_ entry: OldOSKnownApp) {
+        item.name = entry.name
+        item.url = entry.url
+        item.symbol = entry.symbol
+        item.color = entry.color
+        item.icon = nil
+        showInstalledPicker = false
+    }
+
+    private func assignShortcutLink() {
+        let name = shortcutName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        var components = URLComponents()
+        components.scheme = "shortcuts"
+        components.host = "run-shortcut"
+        components.queryItems = [URLQueryItem(name: "name", value: name)]
+        if let link = components.url?.absoluteString {
+            item.url = link
+            if item.name.isEmpty { item.name = name }
+        }
+    }
+
+    var body: some View {
+        Group {
+            if showInstalledPicker {
+                OldOSKnownAppPicker(
+                    onSelect: choose,
+                    onBack: { showInstalledPicker = false }
+                )
+            } else {
+                NavigationView {
+                    Form {
+                        Section("Application") {
+                            Button {
+                                oldOSKeyboard.hide()
+                                showInstalledPicker = true
+                            } label: {
+                                HStack {
+                                    Image(systemName: "square.grid.2x2.fill")
+                                    Text("Choose an installed app")
+                                    Spacer()
+                                    Image(systemName: "chevron.right")
+                                }
+                            }
+                            Text("Select from apps OldOS can detect on your iPhone.")
+                                .font(.footnote).foregroundColor(.secondary)
+                            HStack {
+                                Text("Name")
+                                    .frame(width: 75, alignment: .leading)
+                                OldOSTextField("App name", text: $item.name,
+                                               configuration: .standard, height: 32)
+                                    .frame(height: 36)
+                            }
+                            HStack {
+                                Text("Link")
+                                    .frame(width: 75, alignment: .leading)
+                                OldOSTextField("App URL or Shortcut", text: $item.url,
+                                               configuration: .url, height: 32)
+                                    .frame(height: 36)
+                            }
+                            if !item.url.isEmpty && !item.isValid {
+                                Text("Enter an app URL or Shortcut link.")
+                                    .foregroundColor(.red).font(.footnote)
+                            }
+                        }
+
+                        Section("Classic iOS 4 Icon") {
+                            HStack(spacing: 15) {
+                                OldOSShortcutIcon(shortcut: item, size: 60)
+                                PhotosPicker(selection: $photo, matching: .images) {
+                                    Label("Choose Photo", systemImage: "photo")
+                                }
+                                if item.icon != nil {
+                                    Button("Clear") { item.icon = nil }
+                                }
+                            }
+                            Picker("Color", selection: $item.color) {
+                                ForEach(["blue","green","red","orange","purple","gray"], id: \.self) {
+                                    Text($0.capitalized).tag($0)
+                                }
+                            }
+                            Picker("Symbol", selection: $item.symbol) {
+                                ForEach(["app.fill","plus","message.fill","play.rectangle.fill",
+                                         "music.note","gamecontroller.fill","camera.fill",
+                                         "envelope.fill","globe","star.fill","map.fill",
+                                         "paperplane.fill","folder.fill"], id: \.self) {
+                                    Label($0, systemImage: $0).tag($0)
+                                }
+                            }
+                        }
+
+                        Section("Other Apps - Apple Shortcuts") {
+                            Text("For apps not detected above, open Shortcuts and create an action called 'Open App'. Select your app in Apple's app picker and name the Shortcut.")
+                                .font(.footnote)
+                            HStack {
+                                Text("Shortcut")
+                                    .frame(width: 78, alignment: .leading)
+                                OldOSTextField("Shortcut name", text: $shortcutName,
+                                               configuration: .standard, height: 32)
+                                    .frame(height: 36)
+                            }
+                            Button("Use this Shortcut") {
+                                oldOSKeyboard.hide()
+                                assignShortcutLink()
+                            }
+                            .disabled(shortcutName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            Button("Open Shortcuts") {
+                                oldOSKeyboard.hide()
+                                if let url = URL(string: "shortcuts://") {
+                                    UIApplication.shared.open(url)
+                                }
+                            }
+                            Text("Once created, return to OldOS and save this icon.")
+                                .font(.footnote).foregroundColor(.secondary)
+                        }
+                    }
+                    .safeAreaInset(edge: .bottom) {
+                        Color.clear.frame(height: oldOSKeyboard.isVisible ? 250 : 0)
+                    }
+                    .navigationTitle("Add to OldOS")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .navigationBarLeading) {
+                            Button("Cancel") {
+                                oldOSKeyboard.hide()
+                                onCancel()
+                            }
+                        }
+                        ToolbarItem(placement: .navigationBarTrailing) {
+                            Button("Save") {
+                                oldOSKeyboard.hide()
+                                item.name = item.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                                item.url = item.url.trimmingCharacters(in: .whitespacesAndNewlines)
+                                onSave(item)
+                            }
+                            .disabled(!canSave)
+                        }
+                    }
+                }
+                .navigationViewStyle(.stack)
+            }
+        }
+        .onChange(of: photo) { chosen in
+            Task {
+                guard let chosen = chosen,
+                      let data = try? await chosen.loadTransferable(type: Data.self),
+                      let image = UIImage(data: data),
+                      image.size.width > 0, image.size.height > 0 else { return }
+                let size: CGFloat = 144
+                let factor = max(size / image.size.width, size / image.size.height)
+                let drawSize = CGSize(width: image.size.width * factor, height: image.size.height * factor)
+                let rendered = UIGraphicsImageRenderer(size: CGSize(width: size, height: size)).image { _ in
+                    image.draw(in: CGRect(x: (size - drawSize.width) / 2,
+                                          y: (size - drawSize.height) / 2,
+                                          width: drawSize.width, height: drawSize.height))
+                }
+                let bytes = rendered.jpegData(compressionQuality: 0.82)
+                await MainActor.run { item.icon = bytes }
+            }
         }
     }
 }
