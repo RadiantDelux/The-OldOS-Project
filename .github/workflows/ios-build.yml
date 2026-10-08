@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - master
-      - feature/classic-external-app-launcher
   pull_request:
     paths:
       - 'OldOS/**'
@@ -40,6 +39,14 @@ jobs:
         with:
           xcode-version: '16.4'
 
+      - name: Cache resolved Swift packages
+        uses: actions/cache@v4
+        with:
+          path: .build/OldOSPackages
+          key: spm-${{ runner.os }}-xcode-16.4-${{ hashFiles('OldOS/OldOS.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: |
+            spm-${{ runner.os }}-xcode-16.4-
+
       - name: Inspect scheme and toolchain
         shell: bash
         run: |
@@ -47,6 +54,12 @@ jobs:
           xcodebuild -version
           xcodebuild -list -project "$PROJECT"
           test -f "OldOS/OldOS.xcodeproj/xcshareddata/xcschemes/OldOS.xcscheme"
+
+      - name: Parse edited Swift source
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcrun swiftc -frontend -parse "OldOS/OldOS/HomeScreen.swift" "OldOS/OldOS/Voice Memos.swift"
 
       - name: Resolve Swift package dependencies
         shell: bash
